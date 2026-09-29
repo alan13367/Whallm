@@ -397,7 +397,7 @@
 "Verify or repair the model before starting the server." = "Verify or repair the model before starting the server.";
 
 "Prefill acceleration" = "Prefill acceleration";
-"Speeds up prompt processing. Requires layer-major prefill with MTP off. Changes apply on next load." = "Speeds up prompt processing. Requires layer-major prefill with MTP off. Changes apply on next load.";
+"Speeds up prompt processing. Requires layer-major prefill. Changes apply on next load." = "Speeds up prompt processing. Requires layer-major prefill. Changes apply on next load.";
 
 "Keep recently used experts" = "Keep recently used experts";
 
@@ -557,7 +557,7 @@
 "May shorten prefill, but needs extra memory and may slightly change output." = "May shorten prefill, but needs extra memory and may slightly change output.";
 "More ANE work may shorten prefill, but adds memory use and may change output. 0 uses GPU only." = "More ANE work may shorten prefill, but adds memory use and may change output. 0 uses GPU only.";
 "Shorten prefill, but peak memory may rise and output may differ slightly." = "Shorten prefill, but peak memory may rise and output may differ slightly.";
-"Shorten prefill, but may use more memory. Requires layer-major prefill with MTP off." = "Shorten prefill, but may use more memory. Requires layer-major prefill with MTP off.";
+"Shorten prefill, but may use more memory. Requires layer-major prefill." = "Shorten prefill, but may use more memory. Requires layer-major prefill.";
 "Larger batches may shorten prefill, but raise peak memory. 0 selects automatically." = "Larger batches may shorten prefill, but raise peak memory. 0 selects automatically.";
 "Avoid whole-layer overhead on shorter prompts, but fewer prompts benefit from faster prefill." = "Avoid whole-layer overhead on shorter prompts, but fewer prompts benefit from faster prefill.";
 "Reduce SSD waiting, but may need more temporary memory." = "Reduce SSD waiting, but may need more temporary memory.";

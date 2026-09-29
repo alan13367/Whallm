@@ -899,6 +899,15 @@ class DecoderLayer(nn.Module):
         result = self.mlp(mixed)
         return self.mlp_hyper_connection.inject(residual, result, injection)
 
+    def advance_state(self, hidden: mx.array, input_ids: mx.array, cache) -> None:
+        """Advance PLE and linear-attention state for these inputs, skipping the MoE."""
+        if self.layer_type != "linear_attention":
+            raise ValueError("only linear-attention layers advance state without KV")
+        if self.ple is not None:
+            hidden = hidden + self.ple(hidden, input_ids, cache)
+        mixed, _, _ = self.attn_hyper_connection(hidden)
+        self.linear_attn(mixed, create_ssm_mask(mixed, cache), cache)
+
 
 class TextModel(nn.Module):
     def __init__(self, args: ModelArgs, cache: ExpertCache, ngram_store: NGramStore):
@@ -911,7 +920,7 @@ class TextModel(nn.Module):
         ]
         self.hyper_connection_mixer = GatedResidual(args, combine=False)
 
-    def hidden_states(self, input_ids: mx.array, cache=None) -> mx.array:
+    def hidden_states(self, input_ids: mx.array, cache=None, capture: list | None = None) -> mx.array:
         hidden = self.embed_tokens(input_ids)
         hidden = mx.tile(hidden, (1, 1, self.args.hc_count))
         if cache is None:
@@ -919,6 +928,8 @@ class TextModel(nn.Module):
         mask = create_ssm_mask(hidden[..., : self.args.hidden_size], cache[0])
         for layer, layer_cache in zip(self.layers, cache):
             check_cancelled()
+            if capture is not None:
+                capture.append(hidden)
             hidden = layer(hidden, input_ids, mask, layer_cache)
         return hidden
 
@@ -943,11 +954,46 @@ class Model(nn.Module):
         return self.lm_head(self.model(input_ids, cache))
 
     def forward_with_hidden(
-        self, input_ids: mx.array, cache=None
+        self, input_ids: mx.array, cache=None, capture: list | None = None
     ) -> tuple[mx.array, mx.array]:
-        hidden = self.model.hidden_states(input_ids, cache)
+        hidden = self.model.hidden_states(input_ids, cache, capture)
         logits = self.lm_head(self.model.hyper_connection_mixer(hidden))
         return logits, hidden
+
+    def rewind_verification(
+        self,
+        target_cache: list,
+        verified_cache: list,
+        layer_inputs: list[mx.array],
+        token_ids: mx.array,
+        keep: int,
+    ) -> None:
+        """Make ``target_cache`` hold the first ``keep`` verified tokens, in place.
+
+        Attention layers keep the verified KV and trim the rejected tail. Linear-
+        attention state cannot be trimmed, so those layers rerun only PLE and the
+        mixer on their captured verification inputs, from the pre-verification
+        state. No routed experts are read.
+        """
+        rejected = token_ids.shape[1] - keep
+        if not 0 < keep <= token_ids.shape[1] or len(layer_inputs) != len(self.layers):
+            raise ValueError("Qwen verification rewind does not match the verified tokens")
+        for index, layer in enumerate(self.layers):
+            if layer.layer_type == "linear_attention":
+                layer.advance_state(
+                    layer_inputs[index][:, :keep], token_ids[:, :keep], target_cache[index])
+                continue
+            cache = verified_cache[index]
+            if rejected and cache.trim(rejected) != rejected:
+                raise ValueError("Qwen verification cache could not be trimmed")
+            target_cache[index] = cache
+
+    @property
+    def supports_verification_rewind(self) -> bool:
+        return all(
+            layer.layer_type == "linear_attention" or layer.ple is None
+            for layer in self.layers
+        )
 
     @property
     def layers(self):
@@ -1133,6 +1179,8 @@ def generate_mtp_tokens(
 
     embedding_weight = main_model.model.embed_tokens.weight
     lm_head_weight = main_model.lm_head.weight
+    # Roll back rejected drafts without replaying accepted tokens through the MoE.
+    rewind = getattr(main_model, "supports_verification_rewind", False) is True
     mtp_cache = mtp_model.make_cache()
     cache_slots = int(getattr(mtp_model.expert_cache, "slots", 0))
     selected_experts = int(getattr(mtp_model.args, "num_experts_per_tok", 0))
@@ -1159,14 +1207,28 @@ def generate_mtp_tokens(
             end = min(start + mtp_prefill_step, paired_tokens.shape[1])
             advance_mtp(paired_hidden[:, start:end], paired_tokens[:, start:end])
 
+    def prefill_mtp_layer_major(paired_hidden: mx.array, paired_tokens: mx.array) -> None:
+        # Read the draft layer's experts once into a whole-layer buffer, as the
+        # main model's layer-major Prefill does, instead of slot-sized chunks.
+        expert_cache = mtp_model.expert_cache
+        batched = getattr(expert_cache, "batched_layer", None)
+        reuse = getattr(expert_cache, "reuse_layer_buffers", None)
+        if not callable(batched) or not callable(reuse):
+            prefill_mtp(paired_hidden, paired_tokens)
+            return
+        with reuse(), batched(0):
+            for start in range(0, paired_tokens.shape[1], prefill_step_size):
+                check_cancelled()
+                end = min(start + prefill_step_size, paired_tokens.shape[1])
+                advance_mtp(paired_hidden[:, start:end], paired_tokens[:, start:end])
+
     if prefilled_hidden is not None:
         if prefilled_hidden.shape[1] != len(prompt) - 1:
             raise ValueError("Qwen MTP Prefill hidden state length does not match")
-        mtp_prefill_window = min(prefilled_hidden.shape[1], mtp_prefill_step)
-        prefill_mtp(
-            prefilled_hidden[:, -mtp_prefill_window:],
-            mx.array([prompt[1:]], dtype=mx.int32)[:, -mtp_prefill_window:],
-        )
+        # The draft layer attends over the whole prompt, as in training. A short
+        # tail window leaves its KV cache nearly empty and lowers acceptance.
+        prefill_mtp_layer_major(
+            prefilled_hidden, mx.array([prompt[1:]], dtype=mx.int32))
         final_logits, final_hidden = main_model.forward_with_hidden(
             mx.array([[prompt[-1]]], dtype=mx.int32),
             target_cache,
@@ -1256,9 +1318,12 @@ def generate_mtp_tokens(
         verified_cache, copied = _fork_prompt_cache(target_cache)
         if copied:
             mx.eval(*copied)
-        verified_logits, verified_hidden = main_model.forward_with_hidden(
-            mx.array([[anchor, *draft_tokens]], dtype=mx.int32),
-            verified_cache,
+        verified_ids = mx.array([[anchor, *draft_tokens]], dtype=mx.int32)
+        layer_inputs = [] if rewind else None
+        verified_logits, verified_hidden = (
+            main_model.forward_with_hidden(verified_ids, verified_cache, layer_inputs)
+            if rewind
+            else main_model.forward_with_hidden(verified_ids, verified_cache)
         )
         eval_prompt_cache(verified_cache, verified_logits, verified_hidden)
         target_logprobs = mx.stack(
@@ -1285,6 +1350,14 @@ def generate_mtp_tokens(
             target_cache[:] = verified_cache
             predecessor_hidden = verified_hidden[:, -1:]
             advance_mtp(draft_hidden, mx.array([[draft_tokens[-1]]], dtype=mx.int32))
+        elif rewind:
+            rollback_mtp_cache(mtp_cache, checkpoint + accepted + 1)
+            replay_started = time.perf_counter()
+            main_model.rewind_verification(
+                target_cache, verified_cache, layer_inputs, verified_ids, accepted + 1)
+            predecessor_hidden = verified_hidden[:, accepted : accepted + 1]
+            eval_prompt_cache(target_cache, predecessor_hidden)
+            replay_seconds = time.perf_counter() - replay_started
         else:
             rollback_mtp_cache(mtp_cache, checkpoint + accepted + 1)
             replay_started = time.perf_counter()
@@ -1394,10 +1467,8 @@ def load(
             for _, module in model.named_modules():
                 if isinstance(module, (GroupRMSNorm, GatedResidual)):
                     module.compiled = True
-        grouped_prefill = bool(
-            getattr(config, "qwen_grouped_experts", True)
-            and not getattr(config, "mtp_enabled", False)
-        )
+        # Grouping only reorders gather_qmm rows; MTP receives identical hidden states.
+        grouped_prefill = bool(getattr(config, "qwen_grouped_experts", True))
         for layer in model.model.layers:
             layer.mlp.shared_overlap = getattr(config, "qwen_shared_expert_overlap", False)
             layer.mlp.experts.grouped_prefill = grouped_prefill

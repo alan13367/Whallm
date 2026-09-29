@@ -397,7 +397,7 @@
 "Verify or repair the model before starting the server." = "啟動 server 前，請先驗證或修復模型。";
 
 "Prefill acceleration" = "Prefill 加速";
-"Speeds up prompt processing. Requires layer-major prefill with MTP off. Changes apply on next load." = "加快提示詞處理。需要啟用 layer-major prefill，並關閉 MTP。變更會在下次載入模型時生效。";
+"Speeds up prompt processing. Requires layer-major prefill. Changes apply on next load." = "加快提示詞處理。需要啟用 layer-major prefill。變更會在下次載入模型時生效。";
 
 "Keep recently used experts" = "保留最近使用的專家資料";
 
@@ -557,7 +557,7 @@
 "May shorten prefill, but needs extra memory and may slightly change output." = "可能縮短 prefill 時間，但需要額外記憶體，輸出可能略有差異。";
 "More ANE work may shorten prefill, but adds memory use and may change output. 0 uses GPU only." = "調高可能縮短 prefill 時間，但會增加記憶體用量，輸出可能略有差異。0 僅使用 GPU。";
 "Shorten prefill, but peak memory may rise and output may differ slightly." = "縮短 prefill 時間，但記憶體峰值可能上升，輸出可能略有差異。";
-"Shorten prefill, but may use more memory. Requires layer-major prefill with MTP off." = "縮短 prefill 時間，但可能增加記憶體用量。需啟用 layer-major prefill 並關閉 MTP。";
+"Shorten prefill, but may use more memory. Requires layer-major prefill." = "縮短 prefill 時間，但可能增加記憶體用量。需啟用 layer-major prefill。";
 "Larger batches may shorten prefill, but raise peak memory. 0 selects automatically." = "調高可能縮短 prefill 時間，但會提高記憶體峰值。0 為自動選擇。";
 "Avoid whole-layer overhead on shorter prompts, but fewer prompts benefit from faster prefill." = "調高可減少短輸入的整層載入開銷，但較少請求能享有 prefill 加速。";
 "Reduce SSD waiting, but may need more temporary memory." = "減少等待 SSD 的時間，但可能需要更多暫存記憶體。";

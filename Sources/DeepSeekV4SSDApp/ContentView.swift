@@ -1924,10 +1924,10 @@ struct ModelAdvancedView: View {
             toggleField(
               "Prefill acceleration",
               hint:
-                "Speeds up prompt processing. Requires layer-major prefill with MTP off. Changes apply on next load.",
+                "Speeds up prompt processing. Requires layer-major prefill. Changes apply on next load.",
               value: qwenGroupedExperts
             )
-            .disabled(!settings.layerMajorPrefill || mtpEnabled.wrappedValue || qwenFlashWavesActive)
+            .disabled(!settings.layerMajorPrefill || qwenFlashWavesActive)
           }
           if modelKind.descriptor.editableSettings.contains("prefillThreshold") {
             Divider()

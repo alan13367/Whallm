@@ -510,7 +510,7 @@ class QwenTests(unittest.TestCase):
         self.assertEqual([token for token, _ in generated], [3, 4, 5])
         self.assertEqual(target_cache[0].offset, 4)
 
-    def test_mtp_layer_major_prefill_is_bounded_by_expert_slots(self):
+    def test_mtp_layer_major_prefill_covers_whole_prompt_in_slot_chunks(self):
         target = FakeGreedyTarget()
         mtp = FakeGreedyMTP()
         mtp.expert_cache.slots = 20
@@ -530,7 +530,48 @@ class QwenTests(unittest.TestCase):
         )
 
         self.assertEqual([token for token, _ in generated], [8])
-        self.assertEqual(mtp.cache.offset, 2)
+        # Without whole-layer buffers, chunks stay within slots // top-k.
+        self.assertEqual(mtp.cache.offset, 6)
+        self.assertEqual(mtp.maximum_input_tokens, 2)
+        self.assertEqual(target_cache[0].offset, 7)
+
+    def test_mtp_layer_major_prefill_uses_one_whole_layer_buffer(self):
+        target = FakeGreedyTarget()
+        mtp = FakeGreedyMTP()
+        events = []
+
+        @contextmanager
+        def reuse_layer_buffers():
+            events.append("reuse")
+            yield
+            events.append("release")
+
+        @contextmanager
+        def batched_layer(layer):
+            events.append(("layer", layer))
+            yield
+            events.append(("done", layer, mtp.cache.offset))
+
+        mtp.expert_cache = SimpleNamespace(
+            slots=10, reuse_layer_buffers=reuse_layer_buffers, batched_layer=batched_layer)
+        target_cache = [FakeTargetCache()]
+        target_cache[0].offset = 6
+
+        generated = list(
+            generate_mtp_tokens(
+                [1, 2, 3, 4, 5, 6, 7],
+                target,
+                mtp,
+                target_cache,
+                max_tokens=1,
+                prefill_step_size=4,
+                prefilled_hidden=mx.ones((1, 6, 1)),
+            )
+        )
+
+        self.assertEqual([token for token, _ in generated], [8])
+        self.assertEqual(events, ["reuse", ("layer", 0), ("done", 0, 6), "release"])
+        self.assertEqual(mtp.maximum_input_tokens, 4)
         self.assertEqual(target_cache[0].offset, 7)
 
     def test_ngram_hash_keeps_cross_chunk_context(self):

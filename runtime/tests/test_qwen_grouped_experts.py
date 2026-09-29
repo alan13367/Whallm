@@ -44,13 +44,14 @@ class GroupedExpertsTests(unittest.TestCase):
                 self.assertTrue(mx.array_equal(actual, expected).item())
         self.assertEqual(calls, [2] * 10)
 
-    def test_load_applies_default_off_override_and_mtp_guard(self):
+    def test_load_applies_default_off_override_with_or_without_mtp(self):
         installed = SimpleNamespace(root=Path("/unused"), ngram=SimpleNamespace(file="ngram.bin"))
         scale = "model.language_model.layers.1.ple.ple_embedding.ngram_embedding.weight_scale"
         for config, expected in (
             (RuntimeConfig(), True),
             (RuntimeConfig(qwen_grouped_experts=False), False),
-            (RuntimeConfig(mtp_enabled=True), False),
+            # Grouping is bit-identical, so MTP no longer disables it.
+            (RuntimeConfig(mtp_enabled=True), True),
         ):
             with self.subTest(config=config):
                 model = MagicMock()
