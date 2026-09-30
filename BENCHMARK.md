@@ -69,7 +69,7 @@ this change:
 
 ## Qwen MTP draft context and rewind (2026-09-29)
 
-Source comparison of `ba9e126` against the same tree with four MTP changes. First, the
+Historical source comparison of `ba9e126` against `35ae599` with four MTP changes. First, the
 native draft layer's attention cache is filled from the whole prompt after layer-major
 Prefill. Previously it received only the last `mtp_slots // 10` positions, 3-4 tokens
 at default budgets. Second, that fill reads the draft layer's experts once into a
@@ -78,6 +78,13 @@ Fourth, rejected drafts roll back without replaying accepted tokens through the 
 attention layers trim the verified cache, and linear-attention layers rerun only PLE
 and the Gated DeltaNet mixer on captured verification inputs. The installed model,
 sampling, and MTP-off paths are unchanged.
+
+These measurements predate the correction that makes `eval_prompt_cache` wait for
+Qwen's recurrent, convolution, and N-gram arrays. Previously, rejected-draft rewind
+could defer linear-attention calculations until the next forward pass, understating
+its recorded `replay_seconds`. The table remains a historical end-to-end result,
+not a measurement of the corrected source. No corrected full-model timings have
+been recorded here.
 
 Environment: Apple M4 Max, 36 GB, macOS 27.0.1, Python 3.14.7, MLX 0.32.2, mlx-lm
 0.31.3. Direct runtime harness, not the App or HTTP server. Workload: bundled Code or

@@ -1356,6 +1356,7 @@ def generate_mtp_tokens(
             main_model.rewind_verification(
                 target_cache, verified_cache, layer_inputs, verified_ids, accepted + 1)
             predecessor_hidden = verified_hidden[:, accepted : accepted + 1]
+            # Rewound linear state is lazy; finish it before stopping the timer.
             eval_prompt_cache(target_cache, predecessor_hidden)
             replay_seconds = time.perf_counter() - replay_started
         else:

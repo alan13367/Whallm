@@ -91,6 +91,29 @@ class VerificationRewindTests(unittest.TestCase):
                     b, _ = model.forward_with_hidden(following, reference)
                     np.testing.assert_allclose(np.asarray(a), np.asarray(b), atol=5e-5, rtol=5e-5)
 
+    def test_rewind_eval_waits_for_all_linear_state(self):
+        prompt = mx.array([[1, 2, 3, 4, 5, 6, 7, 8, 9]])
+        verified_ids = mx.array([[10, 11, 12, 13]])
+        for pooled in (False, True):
+            with self.subTest(pooled=pooled):
+                model = self.model(pooled)
+                prefilled = model.make_cache()
+                eval_prompt_cache(prefilled, *model.forward_with_hidden(prompt, prefilled))
+                target, verified, inputs = fork(prefilled), fork(prefilled), []
+                _, hidden = model.forward_with_hidden(verified_ids, verified, inputs)
+                eval_prompt_cache(verified, hidden)
+                model.rewind_verification(target, verified, inputs, verified_ids, 2)
+                linear_state = [value for cache in target[:3] for value in arrays(cache)]
+                self.assertEqual(len(linear_state), 8)
+
+                # Use the same wait as generate_mtp_tokens, before stopping its timer.
+                with patch("deepseek_v4_ssd.model.mx.eval", wraps=mx.eval) as evaluate:
+                    count, size = eval_prompt_cache(target, hidden[:, 1:2])
+                evaluated = {id(value) for value in evaluate.call_args.args}
+                self.assertTrue({id(value) for value in linear_state} <= evaluated)
+                self.assertGreaterEqual(count, len(linear_state))
+                self.assertGreaterEqual(size, sum(value.nbytes for value in linear_state))
+
     def test_rewind_rejects_mismatched_inputs(self):
         model = self.model(False)
         cache = model.make_cache()
